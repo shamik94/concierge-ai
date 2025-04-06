@@ -63,7 +63,7 @@ class GoogleMapsLLMIntegration:
         
         try:
             response = self.openai_client.chat.completions.create(
-                model="gpt-4.5-preview-2025-02-27",
+                model="gpt-4-turbo-preview",
                 messages=[
                     {"role": "user", "content": prompt}
                 ],
