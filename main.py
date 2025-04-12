@@ -313,27 +313,25 @@ class GoogleMapsLLMIntegration:
             
         return time_val, 0  # Assuming minutes are always 0 for simplicity
     
-    def format_results(self, results: List[Dict[str, Any]]) -> str:
-        """Format the search results into a human-readable response."""
+    def format_results(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Format the search results into a structured list."""
         if not results:
-            return "I couldn't find any places matching your criteria."
+            return []
         
-        response = f"I found {len(results)} places matching your criteria:\n\n"
+        formatted_results = []
+        for place in results:
+            formatted_place = {
+                "name": place.get("name", "Unnamed place"),
+                "address": place.get("formatted_address", "No address available"),
+                "rating": place.get("rating", None),
+                "website": place.get("website", None),
+                "phone": place.get("formatted_phone_number", None),
+                "opening_hours": place.get("opening_hours", {}).get("weekday_text", []) if place.get("opening_hours") else None,
+                "user_ratings_total": place.get("user_ratings_total", None)
+            }
+            formatted_results.append(formatted_place)
         
-        for i, place in enumerate(results, 1):
-            name = place.get("name", "Unnamed place")
-            address = place.get("formatted_address", "No address available")
-            rating = place.get("rating", "No rating")
-            website = place.get("website", "No website available")
-            phone = place.get("formatted_phone_number", "No phone number available")
-            
-            response += f"{i}. {name}\n"
-            response += f"   Address: {address}\n"
-            response += f"   Rating: {rating} ⭐\n"
-            response += f"   Phone: {phone}\n"
-            response += f"   Website: {website}\n\n"
-        
-        return response
+        return formatted_results
     
     def process_query(self, user_query: str) -> str:
         """
