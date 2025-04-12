@@ -20,299 +20,237 @@ openai_client = OpenAI(
     api_key=OPENAI_API_KEY
 )
 
+class QueryAnalysisAgent:
+    """Agent responsible for understanding and structuring natural language queries"""
+    
+    def __init__(self, openai_client: OpenAI):
+        self.openai_client = openai_client
+
+    def analyze(self, query: str) -> Dict[str, Any]:
+        prompt = """You are a specialized agent for understanding location-based queries.
+        Analyze the following query and extract structured information.
+        
+        Consider:
+        1. Intent (finding places, checking hours, getting directions, etc.)
+        2. Place type and attributes
+        3. Location details
+        4. Temporal requirements (if any)
+        5. Special requirements or preferences
+        
+        Query: {query}
+        
+        Provide a detailed JSON response with these fields:
+        - intent: primary purpose of the query
+        - place_type: main type of establishment (e.g., restaurant, cafe)
+        - attributes: list of specific attributes or requirements (e.g., ["biryani", "muslim-style"])
+        - location: specific location or area
+        - temporal: any time-related requirements (can be empty if none specified)
+          - day: day of week (if specified)
+          - time: specific time (if specified)
+          - time_context: "open_until", "open_from", or "open_at" (if specified)
+        - preferences: additional preferences or requirements
+        
+        For queries without time requirements, return an empty object for temporal.
+        """
+        
+        response = self.openai_client.chat.completions.create(
+            model="gpt-4-turbo-preview",
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": query}
+            ],
+            response_format={ "type": "json_object" }
+        )
+        
+        return json.loads(response.choices[0].message.content)
+
+class LocationAnalysisAgent:
+    """Agent responsible for analyzing and validating location information"""
+    
+    def __init__(self, google_api_key: str):
+        self.google_api_key = google_api_key
+        self.base_url = "https://maps.googleapis.com/maps/api"
+
+    def validate_and_enhance_location(self, location: str) -> Dict[str, Any]:
+        geocode_url = f"{self.base_url}/geocode/json"
+        params = {
+            "address": location,
+            "key": self.google_api_key
+        }
+        
+        response = requests.get(geocode_url, params=params)
+        data = response.json()
+        
+        if data.get("status") != "OK":
+            return {"valid": False, "error": "Location not found"}
+            
+        result = data["results"][0]
+        return {
+            "valid": True,
+            "formatted_address": result["formatted_address"],
+            "coordinates": result["geometry"]["location"],
+            "place_id": result.get("place_id"),
+            "types": result.get("types", []),
+            "bounds": result.get("geometry", {}).get("bounds")
+        }
+
+class TimeAnalysisAgent:
+    """Agent responsible for parsing and validating temporal requirements"""
+    
+    def parse_time_requirement(self, temporal_info: Dict[str, Any]) -> Dict[str, Any]:
+        day_mapping = {
+            "monday": 1, "tuesday": 2, "wednesday": 3, "thursday": 4,
+            "friday": 5, "saturday": 6, "sunday": 0
+        }
+        
+        try:
+            day = temporal_info.get("day", "").lower()
+            time_str = temporal_info.get("time", "")
+            context = temporal_info.get("time_context", "open_until")
+            
+            # Convert time to 24-hour format
+            if isinstance(time_str, str) and ("am" in time_str.lower() or "pm" in time_str.lower()):
+                time_parts = time_str.lower().replace(".", "").strip().split()
+                hour = int(time_parts[0])
+                if "pm" in time_parts[1] and hour != 12:
+                    hour += 12
+                elif "am" in time_parts[1] and hour == 12:
+                    hour = 0
+            else:
+                hour = int(time_str) if time_str else None
+
+            return {
+                "day_number": day_mapping.get(day, -1),
+                "day_name": day,
+                "hour_24": hour,
+                "context": context,
+                "valid": bool(day in day_mapping and hour is not None)
+            }
+        except Exception as e:
+            return {"valid": False, "error": str(e)}
+
 class GoogleMapsLLMIntegration:
     """
-    A class that integrates Google Maps API with an LLM to process natural language queries
-    about locations, restaurants, and other points of interest.
+    Enhanced integration class using specialized agents for better query understanding
     """
     
     def __init__(self, google_api_key: str, openai_client: OpenAI):
-        """Initialize with API keys."""
+        self.query_agent = QueryAnalysisAgent(openai_client)
+        self.location_agent = LocationAnalysisAgent(google_api_key)
+        self.time_agent = TimeAnalysisAgent()
         self.google_api_key = google_api_key
-        self.openai_client = openai_client
         self.base_url = "https://maps.googleapis.com/maps/api"
-    
-    def parse_query(self, user_query: str) -> Dict[str, Any]:
-        """
-        Use the LLM to parse the natural language query into structured parameters
-        for the Google Maps API.
-        """
-        print(f"Parsing query: {user_query}")
-        prompt = f"""
-        Extract the following information from this query about places:
-        1. Type of place (restaurant, cafe, bar, etc.)
-        2. Specific attributes (vegan, Italian, etc.) - return as a list
-        3. Location/neighborhood
-        4. Opening hours requirement
-        5. Day of week
-        
-        Query: {user_query}
-        
-        Format your response as a JSON object with these keys:
-        place_type, attributes (as a list), location, open_until, day_of_week
 
-        Example format:
-        {{
-            "place_type": "restaurant",
-            "attributes": ["vegan", "organic"],
-            "location": "Manhattan",
-            "open_until": "10 pm",
-            "day_of_week": "Friday"
-        }}
+    def process_query(self, user_query: str) -> List[Dict[str, Any]]:
         """
-        
+        Enhanced query processing using multiple agents
+        """
         try:
-            response = self.openai_client.chat.completions.create(
-                model="gpt-4-turbo-preview",
-                messages=[
-                    {"role": "user", "content": prompt}
-                ],
-                response_format={ "type": "json_object" }
-            )
-            print(f"OpenAI response: {response}")
+            # Step 1: Analyze the query using the QueryAnalysisAgent
+            print("Step 1: Analyzing query...")
+            query_analysis = self.query_agent.analyze(user_query)
+            print(f"Query analysis: {query_analysis}")
+
+            # Step 2: Validate and enhance location information
+            print("Step 2: Validating location...")
+            location_info = self.location_agent.validate_and_enhance_location(query_analysis["location"])
+            if not location_info["valid"]:
+                raise ValueError(f"Invalid location: {location_info.get('error')}")
+            print(f"Location info: {location_info}")
+
+            # Step 3: Parse temporal requirements (only if present)
+            has_time_requirements = query_analysis.get("temporal") and any(query_analysis["temporal"].values())
+            time_info = None
+            if has_time_requirements:
+                print("Step 3: Analyzing temporal requirements...")
+                time_info = self.time_agent.parse_time_requirement(query_analysis["temporal"])
+                if not time_info["valid"]:
+                    raise ValueError(f"Invalid time requirement: {time_info.get('error')}")
+                print(f"Time info: {time_info}")
+            else:
+                print("No temporal requirements specified, skipping time validation...")
+
+            # Step 4: Search for places using enhanced information
+            search_params = {
+                "location": f"{location_info['coordinates']['lat']},{location_info['coordinates']['lng']}",
+                "radius": 1500,
+                "type": query_analysis["place_type"].lower(),
+                "keyword": " ".join(query_analysis["attributes"]),
+                "key": self.google_api_key
+            }
             
-            # Extract the JSON from the LLM response
-            parsed_json = json.loads(response.choices[0].message.content)
-            
-            # Ensure attributes is a list
-            if isinstance(parsed_json.get('attributes'), str):
-                parsed_json['attributes'] = [parsed_json['attributes']]
-            
-            print(f"Parsed JSON: {parsed_json}")
-            return parsed_json
+            places_url = f"{self.base_url}/place/nearbysearch/json"
+            places_response = requests.get(places_url, params=search_params)
+            places_data = places_response.json()
+
+            if places_data.get("status") != "OK":
+                return []
+
+            # Step 5: Filter and enhance results
+            results = []
+            for place in places_data.get("results", []):
+                # Only validate timing if temporal requirements exist
+                if has_time_requirements:
+                    if self._validate_place_timing(place["place_id"], time_info):
+                        details = self._get_place_details(place["place_id"])
+                        if details:
+                            results.append(details)
+                else:
+                    details = self._get_place_details(place["place_id"])
+                    if details:
+                        results.append(details)
+
+            return self.format_results(results)
+
         except Exception as e:
-            print(f"Error in parse_query: {str(e)}")
-            print(f"Error type: {type(e)}")
-            return self._fallback_parsing(user_query)
-    
-    def _fallback_parsing(self, query: str) -> Dict[str, Any]:
-        """Simple fallback parsing if JSON extraction fails."""
-        params = {
-            "place_type": "restaurant",
-            "attributes": [],
-            "location": "",
-            "open_until": None,
-            "day_of_week": None
+            print(f"Error in process_query: {str(e)}")
+            return []
+
+    def _validate_place_timing(self, place_id: str, time_info: Dict[str, Any]) -> bool:
+        """Validate if a place meets the temporal requirements"""
+        details_url = f"{self.base_url}/place/details/json"
+        details_params = {
+            "place_id": place_id,
+            "fields": "opening_hours",
+            "key": self.google_api_key
         }
         
-        # Basic extraction
-        if "vegan" in query.lower():
-            params["attributes"].append("vegan")
-            
-        if "restaurant" in query.lower():
-            params["place_type"] = "restaurant"
-            
-        # Extract location
-        if "in" in query.lower():
-            parts = query.lower().split("in")
-            if len(parts) > 1:
-                location_part = parts[1].strip()
-                if "which" in location_part:
-                    location_part = location_part.split("which")[0].strip()
-                params["location"] = location_part
+        response = requests.get(details_url, params=details_params)
+        data = response.json()
         
-        # Extract time
-        if "till" in query.lower() or "until" in query.lower():
-            for part in query.lower().replace("till", "until").split("until"):
-                if "pm" in part or "am" in part:
-                    time_parts = part.strip().split()
-                    params["open_until"] = time_parts[0]
+        if data.get("status") != "OK":
+            return False
+            
+        opening_hours = data.get("result", {}).get("opening_hours", {})
+        if not opening_hours:
+            return False
+            
+        periods = opening_hours.get("periods", [])
+        for period in periods:
+            if period.get("open", {}).get("day") == time_info["day_number"]:
+                close_time = period.get("close", {}).get("time")
+                if close_time and int(close_time) >= time_info["hour_24"] * 100:
+                    return True
         
-        # Extract day
-        days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
-        for day in days:
-            if day in query.lower():
-                params["day_of_week"] = day
-                
-        return params
-    
-    def search_places(self, params: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """
-        Search for places using the Google Maps Places API based on the extracted parameters.
-        """
-        try:
-            # Validate API key
-            print(f"Using Google Maps API key: {self.google_api_key[:6]}...")  # Only print first 6 chars for security
-            if not self.google_api_key:
-                print("Error: Google Maps API key is missing")
-                return []
+        return False
 
-            # Build the query
-            place_type = params.get("place_type", "restaurant")
-            attributes = params.get("attributes", [])
-            location = params.get("location", "")
-            
-            print(f"Searching for: type={place_type}, attributes={attributes}, location={location}")
-            
-            # Format the query for the Places API
-            keyword = " ".join([place_type] + attributes)
-            
-            # First, test the API key with a simple geocoding request
-            test_url = f"{self.base_url}/geocode/json"
-            test_params = {
-                "address": "New York",  # Simple test address
-                "key": self.google_api_key
-            }
-            
-            print("Testing API key with simple geocoding request...")
-            test_response = requests.get(test_url, params=test_params)
-            test_data = test_response.json()
-            print(f"Test API response status: {test_data.get('status')}")
-            print(f"Test API full response: {test_data}")
-            
-            if test_data.get('error_message'):
-                print(f"API Error Message: {test_data.get('error_message')}")
-                return []
-            
-            # Now proceed with actual geocoding request
-            geocode_url = f"{self.base_url}/geocode/json"
-            geocode_params = {
-                "address": location,
-                "key": self.google_api_key
-            }
-            
-            print(f"Making geocoding request for: {location}")
-            print(f"Full geocoding URL: {geocode_url}?address={location}&key=[HIDDEN]")
-            
-            geocode_response = requests.get(geocode_url, params=geocode_params)
-            geocode_data = geocode_response.json()
-            
-            if geocode_data.get('error_message'):
-                print(f"Geocoding Error Message: {geocode_data.get('error_message')}")
-                return []
-            
-            print(f"Geocoding response status: {geocode_data.get('status')}")
-            
-            if geocode_data.get("status") != "OK" or not geocode_data.get("results"):
-                print(f"Geocoding failed with status: {geocode_data.get('status')}")
-                return []
-            
-            # Extract location coordinates
-            location_coords = geocode_data["results"][0]["geometry"]["location"]
-            latitude = location_coords["lat"]
-            longitude = location_coords["lng"]
-            
-            print(f"Found coordinates: lat={latitude}, lng={longitude}")
-            
-            # Now search for places using the Places API
-            places_url = f"{self.base_url}/place/nearbysearch/json"
-            places_params = {
-                "location": f"{latitude},{longitude}",
-                "radius": 1500,  # 1.5km radius
-                "type": place_type.lower(),
-                "keyword": " ".join(attributes),
-                "key": self.google_api_key
-            }
-            
-            print(f"Making places search request...")
-            print(f"Places search parameters: {places_params}")
-            
-            places_response = requests.get(places_url, params=places_params)
-            places_data = places_response.json()
-            
-            if places_data.get('error_message'):
-                print(f"Places API Error Message: {places_data.get('error_message')}")
-                return []
-            
-            print(f"Places API response status: {places_data.get('status')}")
-            
-            if places_data.get("status") != "OK":
-                print(f"Places API failed with status: {places_data.get('status')}")
-                return []
-            
-            results = places_data.get("results", [])
-            print(f"Found {len(results)} places before filtering")
-            
-            # Filter based on opening hours if specified
-            filtered_results = []
-            
-            day_of_week = params.get("day_of_week")
-            open_until = params.get("open_until")
-            
-            if not (day_of_week and open_until):
-                return results
-            
-            # For each place, check if it's open until the specified time on the specified day
-            for place in results:
-                place_id = place.get("place_id")
-                if not place_id:
-                    continue
-                
-                # Get place details to check opening hours
-                details_url = f"{self.base_url}/place/details/json"
-                details_params = {
-                    "place_id": place_id,
-                    "fields": "name,place_id,formatted_address,opening_hours,website,formatted_phone_number,rating,review",
-                    "key": self.google_api_key
-                }
-                
-                details_response = requests.get(details_url, params=details_params)
-                details_data = details_response.json()
-                
-                if details_data.get("status") != "OK" or not details_data.get("result"):
-                    continue
-                
-                place_details = details_data["result"]
-                
-                # Check if the place has opening hours information
-                if "opening_hours" in place_details and "periods" in place_details["opening_hours"]:
-                    periods = place_details["opening_hours"]["periods"]
-                    
-                    # Map day of week to number (0 = Sunday, 1 = Monday, etc.)
-                    day_map = {
-                        "sunday": 0, "monday": 1, "tuesday": 2, "wednesday": 3,
-                        "thursday": 4, "friday": 5, "saturday": 6
-                    }
-                    
-                    day_num = day_map.get(day_of_week.lower(), -1)
-                    
-                    if day_num == -1:
-                        continue
-                    
-                    # Find the period for the specified day
-                    day_period = None
-                    for period in periods:
-                        if period.get("open", {}).get("day") == day_num:
-                            day_period = period
-                            break
-                    
-                    if not day_period:
-                        continue
-                    
-                    # Check if the place is open until the specified time
-                    close_time = day_period.get("close", {}).get("time")
-                    if not close_time:
-                        continue
-                    
-                    # Convert times to 24-hour format for comparison
-                    requested_hours, requested_minutes = self._parse_time(open_until)
-                    requested_time = requested_hours * 100 + requested_minutes
-                    
-                    # The time in Google API is in 24-hour format (e.g., "2300" for 11:00 PM)
-                    if int(close_time) >= requested_time:
-                        filtered_results.append(place_details)
-            
-            return filtered_results
+    def _get_place_details(self, place_id: str) -> Optional[Dict[str, Any]]:
+        """Get detailed information about a place"""
+        details_url = f"{self.base_url}/place/details/json"
+        details_params = {
+            "place_id": place_id,
+            "fields": "name,place_id,formatted_address,opening_hours,website,formatted_phone_number,rating,user_ratings_total",
+            "key": self.google_api_key
+        }
         
-        except Exception as e:
-            print(f"Error in search_places: {str(e)}")
-            print(f"Error type: {type(e)}")
-            import traceback
-            print(f"Traceback: {traceback.format_exc()}")
-            return []
-    
-    def _parse_time(self, time_str: str) -> tuple:
-        """Parse time string (e.g., '11 pm') to hours and minutes."""
-        parts = time_str.lower().strip().split()
-        time_val = int(parts[0])
+        response = requests.get(details_url, params=details_params)
+        data = response.json()
         
-        if "pm" in parts[1] and time_val < 12:
-            time_val += 12
-        elif "am" in parts[1] and time_val == 12:
-            time_val = 0
-            
-        return time_val, 0  # Assuming minutes are always 0 for simplicity
-    
+        if data.get("status") != "OK":
+            return None
+        
+        return data.get("result")
+
     def format_results(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Format the search results into a structured list."""
         if not results:
@@ -332,36 +270,6 @@ class GoogleMapsLLMIntegration:
             formatted_results.append(formatted_place)
         
         return formatted_results
-    
-    def process_query(self, user_query: str) -> str:
-        """
-        Main method to process a natural language query about places.
-        """
-        try:
-            print(f"\n--- Processing new query: {user_query} ---")
-            
-            # Step 1: Parse the query using the LLM
-            print("Step 1: Parsing query")
-            params = self.parse_query(user_query)
-            print(f"Parsed parameters: {params}")
-            
-            # Step 2: Search for places using the Google Maps API
-            print("Step 2: Searching places")
-            results = self.search_places(params)
-            print(f"Search results count: {len(results)}")
-            
-            # Step 3: Format and return the results
-            print("Step 3: Formatting results")
-            formatted_results = self.format_results(results)
-            print("Query processing completed successfully")
-            return formatted_results
-        
-        except Exception as e:
-            print(f"Error in process_query: {str(e)}")
-            print(f"Error type: {type(e)}")
-            import traceback
-            print(f"Traceback: {traceback.format_exc()}")
-            return f"An error occurred while processing your query: {str(e)}"
 
 # Create FastAPI app
 app = FastAPI(title="Restaurant Finder API")
