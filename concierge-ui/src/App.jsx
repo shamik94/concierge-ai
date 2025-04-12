@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from "react";
 import axios from "axios";
+import ResultDisplay from './components/ResultDisplay';
 
 function App() {
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState(null);
+  const [response, setResponse] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
@@ -28,10 +29,10 @@ function App() {
     setError(null);
 
     try {
-      const response = await axios.post("http://localhost:8000/search", {
+      const result = await axios.post("http://localhost:8000/search", {
         query: query.trim(),
       });
-      setResults(response.data.results);
+      setResponse(result.data);
     } catch (err) {
       setError("An error occurred while processing your request. Please try again.");
     } finally {
@@ -108,66 +109,11 @@ function App() {
           </div>
         )}
 
-        {results && (
-          <div className="mt-8 bg-white shadow overflow-hidden rounded-lg divide-y divide-gray-200">
-            <div className="px-4 py-5 sm:px-6">
-              <h2 className="text-lg leading-6 font-medium text-gray-900">Search Results</h2>
-            </div>
-            {Array.isArray(results) && results.length === 0 ? (
-              <div className="px-4 py-5 sm:p-6 text-center text-gray-500">
-                No places found matching your criteria.
-              </div>
-            ) : (
-              <div className="divide-y divide-gray-200">
-                {results.map((place, index) => (
-                  <div key={index} className="px-4 py-5 sm:p-6">
-                    <h3 className="text-lg leading-6 font-medium text-gray-900">{place.name}</h3>
-                    <div className="mt-4 space-y-3">
-                      <p className="text-sm text-gray-500">
-                        <span className="font-medium text-gray-700">Address:</span> {place.address}
-                      </p>
-                      {place.rating && (
-                        <p className="text-sm text-gray-500">
-                          <span className="font-medium text-gray-700">Rating:</span> {place.rating} ⭐
-                          {place.user_ratings_total && ` (${place.user_ratings_total} reviews)`}
-                        </p>
-                      )}
-                      {place.phone && (
-                        <p className="text-sm text-gray-500">
-                          <span className="font-medium text-gray-700">Phone:</span> {place.phone}
-                        </p>
-                      )}
-                      {place.website && (
-                        <p className="text-sm text-gray-500">
-                          <span className="font-medium text-gray-700">Website:</span>{" "}
-                          <a
-                            href={place.website}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-primary-600 hover:text-primary-500"
-                          >
-                            {place.website}
-                          </a>
-                        </p>
-                      )}
-                      {place.opening_hours && place.opening_hours.length > 0 && (
-                        <div className="mt-4">
-                          <h4 className="text-sm font-medium text-gray-700">Opening Hours:</h4>
-                          <ul className="mt-2 space-y-1">
-                            {place.opening_hours.map((day, i) => (
-                              <li key={i} className="text-sm text-gray-500">
-                                {day}
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+        {response && (
+          <ResultDisplay 
+            queryType={response.query_type}
+            results={response.results}
+          />
         )}
       </div>
     </div>

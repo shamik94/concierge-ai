@@ -1,0 +1,53 @@
+query_types:
+  place_search_temporal:
+    name: "Places with Temporal Requirements"
+    description: "Find places that are open at specific times with certain attributes"
+    pattern: "places that are open {time_context} {time} {attributes}"
+    example: "places that are open till 11 pm having vegan food"
+    agents:
+      - QueryAnalysisAgent
+      - LocationAnalysisAgent
+      - TimeAnalysisAgent
+    response_structure:
+      - name
+      - address
+      - rating
+      - opening_hours
+      - attributes
+
+  place_attribute_check:
+    name: "Place Attribute Check"
+    description: "Check if a specific place has certain attributes"
+    pattern: "does {place} have {attribute}"
+    example: "does Starbucks Berlin have wifi"
+    agents:
+      - PlaceValidationAgent
+      - AttributeCheckAgent
+    response_structure:
+      - place_name
+      - attribute
+      - has_attribute
+      - confidence
+
+  nearby_search:
+    name: "Nearby Search"
+    description: "Find places near a specific location"
+    pattern: "find {place_type} near {location}"
+    example: "find restaurants near Central Park"
+    agents:
+      - LocationAnalysisAgent
+      - PlaceTypeAgent
+    response_structure:
+      - name
+      - distance
+      - rating
+      - address
+
+  unclassified:
+    name: "Unclassified Query"
+    description: "Generic queries that don't match other patterns"
+    pattern: "*"
+    agents:
+      - GenericQueryAgent
+    response_structure:
+      - response_text 
